@@ -1,0 +1,595 @@
+---
+title: "SimSemilla: Simulating the effects of cannabis consumption and potency on harms"
+author: |
+  | Robert J. MacCoun
+  | Stanford University
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+fontsize: 12pt
+geometry: margin=3cm
+output:
+  pdf_document:
+    fig_width: 6
+    fig_height: 5
+    fig_caption: true
+  
+---
+
+*DRAFT: PLEASE DO NOT CIRCULATE OR QUOTE WITHOUT PERMISSION*
+
+\title{SimSemilla: Simulating the links between cannabis consumption and cannabis-related harms}
+\author{Robert J. MacCoun\thanks{Stanford Law School, rmaccoun@stanford.edu}}
+
+
+\section{Introduction}
+
+As of mid-2016, four states have legalized retail sales of recreational cannabis (CO, WA, OR, and AK), and several more may do so by the end of the year.[^cannabis] We are witnessing the rapid growth of a major new industry that will look quite different from the underground trafficking networks of the past.  These changes raise a host of regulatory issues about taxation, advertising, and product regulation (see Caulkins et al., 2015).  
+
+[^cannabis]: I prefer the term "cannabis" but use "marijuana" when that is the term used by a reference source.
+
+Unfortunately, in large part as a consequence of the long federal prohibition (see Manski et al., 2001), we lack solid estimates of what are arguably the most important parameters for forecasting the likely effects of various market regulations on the relationship between consumption and possible health and safety harms:
+
+1. The "etiological fraction" of cannabis's causal contribution to various health and safety harms;
+2. The parameters of the dose-response function linking cannabis consumption to any given harm;
+3. The role that psychopharmacological tolerance plays in moderating those effects; and
+4. Users' willingness and ability to titrate their dose in response to changes in potency.
+
+In our present state of ignorance, it is all too easy for partisans to defend a wide range of claims bolstered by plausible but conflicting assumptions (MacCoun, 2014).  (Attempts to sort through these include Caulkins, 2014; Caulkins et al., 2015; Hall, 2014; Zimmer & Morgan, 1997; and many different governmental and non-governmental websites.).
+
+How to move forward?  There are some things we do know, at least roughly:
+
+1. The current prevalence of cannabis use;
+2. The current frequency of use;
+3. How psychopharmacological dose-response functions usually work; and
+4. How potency, titration, and tolerance influence such functions
+
+In this paper, I present a model, *SimSemilla*, that explores at a high level of abstraction what we do and don't know about how use translates into harms.  The model allows us to explore plausible implications of variations in our assumptions (e.g., "potency doesn't matter because users simply titrate their doses", "heavy users are at greatest risk," "heavy users are more experienced and more tolerant," etc.) Because the model is explicit, it calls attention to the importance of many parameters for which better measurement is woefully needed.
+
+I have attempted to present the model's harm outputs in a way that discourages their interpretation as point prediction and encourages their interpretation as ordinal, directional, qualitative patterns: specifically, safer vs. riskier regions of the space of relevant parameters.
+
+I do not attempt to model "total drug-related harm," summed across health harms, safety harms (; see discussion by MacCoun, Reuter, & Schelling, 1996).  Instead, the model can be used to simulate harms of any *specific* type (e.g., emergency room mentions, treatment admissions).
+
+The model (in its current form) is static, not dynamic.  I do not incorporate any transition probabilities linking the four User types; I do not model initiation to or desistance from use (cf. Everingham & Rydell, 1994; Paddock et al., 2012); and there are no feedback links from harms to use (cf. MacCoun, 1998; MacCoun & Reuter, 2001).  In the current implementation, I sought  simplicity and transparency, so the model treats consumption variables as exogenous.[^recursive]
+
+[^recursive]: In the somewhat confusing language of structural equation modeling, this is a *recursive* model rather than a *non-recursive* model.
+
+The model's key assumption is that the dose-response functions relating cannabis use to harms are monotonically increasing.  This seems harmless enough, but some cannabis enthusiasts suggest that regular users experience less risk per dose.  Non-monotonic dose-response functions have been found in some areas of medicine, but some contend they are spurious effects of selection biases or other confounding factors (Fagin, 2012).  Rather than allowing for non-monotonic functions, I explicitly model two plausible mechanisms that might moderate the dose-harm relationship: *tolerance* and *titration*.
+
+\section{Modeling Consumption}
+
+For simplicitly, I assume four types of $Users_{i,j}$:  Occasional, Monthly, Weekly, and Daily.  The subscript i refers to a User category, and the subscript j refers to a specific user within a User category.  The frequency of each type was based on data on days of use per year reported in the 2013 National Survey on Drug Use and Health (Table 6.1A).
+
+
+Table 1.  User Types (NSDUH, 2013)
+
+Days of use | Number (in 1000s) |	User type (this model)
+------------|-------------------|---------------------------
+1 to 11	    | 9,967	            | $Users_{1}$ (“Occasional”)
+12 to 49    |	6,133	            | $Users_{2}$ (“Monthly”)
+50 to 99	  | 3,230	            | $Users_{3}$ (“Weekly”)
+100 to 299	| 7,894	            | $Users_{3}$ (“Weekly”)
+300 or more	| 5,729	            | $Users_{4}$ (“Daily”)
+
+Kilmer et al. (2014) offer a detailed review of recent evidence on the typical quantities consumed for users at different intensity levels, suggesting that daily users average about 1.6 grams of cannabis per day (roughly 3 joints) and occasional users consume about a third of that on a day of use. Thus, in the current implementation of SimSemilla, I set a reference dose at:
+
+$$(1)\quad  HeavyDose=1.6 grams$$
+
+and then assumed that average daily doses rise linearly according to the following proportions: 
+
+$$
+(2)\quad  Frac_{i}=
+   \begin{cases} 
+   0.33 & Occasional \\ 
+   0.55 & Monthly \\ 
+   0.78 & Weekly \\ 
+   1.00 & Daily
+   \end{cases}
+$$
+
+Thus,
+
+$$(3)\quad  GramsDay_{i}=Frac_{i}\times HeavyDose$$ 
+
+A simulated distribution of daily doses is shown in Figure 1 below.
+
+```{r echo=FALSE, fig.cap="Grams per Day on Day of Use (by assumption)"}
+options(scipen=999,warn=-1)
+#suppressPackageStartupMessages(library(lattice))
+#suppressPackageStartupMessages(library(latticeExtra))
+
+# Number of Users of Each Type (1000s)
+# data from NSDUH 2013 Table 6.1A
+# Occasional, Monthly, Weekly, Daily
+# (allow each "user" to stand in for 1000 users)
+Users <- c(9967, 6133, 3230+7894, 5729)
+# Much slower version:
+#Users <- c(9967, 6133, 3230+7894, 5729)*1000
+names(Users) <- c("Occasional","Monthly","Weekly","Daily")
+
+HeavyDose <- 1.6
+#Note that joint is about .4 to .5g
+# Version 1: (linear from .33 to 1)
+Fracs <- c(0.33, 0.553, .776, 1)
+## Alternative assumptions:
+#fracs <- c(0.25, 0.33, 0.50, 1.00)
+#fracs <- c(0.25, 0.5, 0.75, 1)
+GramsDay <- HeavyDose*Fracs
+names(GramsDay) <- c("Occasional","Monthly","Weekly","Daily")
+barplot(GramsDay, xlab = "User type", ylab = "Grams/Day (by assumption)")
+```
+
+Note that the bimodality of the distribution follows in part from the decision to bin all users in the 50 to 299 day range as "weekly." I do so for simplicity, because the more User types I distinguish, the more assumptions have to be made about their behavior (see below).  But this binning, like other structural model assumptions, can be examined in sensitivity analyses (e.g., those in Appendix B).
+
+To allow for variation within User types, I sampled users from theoretical distributions that acknowledge our ignorance about the details of that variation.
+
+For grams per day, we know something about the central tendency but not the variance, so I sampled users for a given User type from a triangle distribution peaking at $GramsDay_{i}$, as follows:
+
+$$(4)\quad DailyDose_{i,j}~Triangle(min=.25g,peak=GramsDay_{i},max=2*GramsDay_{i})$$
+
+For days of use per year, the NSDUH response bins tell us something about the range of responses but not the central tendency of a bin, so for each User type I sampled from uniform distributions for the ranges shown above in Table 1:
+
+$$(5)\quad DailyDose_{i,j}~Uniform(MinDays_{i},MaxDays_{i})$$
+
+Figure 2 shows the simulated distributions across User types for a typical run:
+
+```{r echo=FALSE, fig.cap="Simulated Quantity (top) and Frequency (bottom) Distributions\n(typical model run)"}
+# (2) Now simulate a distribution of grams/day for each type
+# and then apply titration adjustment using new.dose function.
+suppressPackageStartupMessages(library(triangle))
+suppressPackageStartupMessages(library(MASS))
+Grams.1 <- rtriangle(Users[1], a=.5*GramsDay[1],
+                       b=1.5*GramsDay[1], GramsDay[1])
+Grams.2 <- rtriangle(Users[2], a=.5*GramsDay[2],
+                       b=1.5*GramsDay[2], GramsDay[2])
+Grams.3 <- rtriangle(Users[3], a=.5*GramsDay[3],
+                       b=1.5*GramsDay[3], GramsDay[3])
+Grams.4 <- rtriangle(Users[4], a=.5*GramsDay[4],
+                       b=1.5*GramsDay[4], GramsDay[4])
+Grams <- c(Grams.1,Grams.2,Grams.3,Grams.4)
+
+# (3) Now simulate days used per year
+Days.1 <- runif(Users[1],min=1,max=11)
+Days.2 <- runif(Users[2],min=12,max=49)
+Days.3 <- runif(Users[3],min=50,max=299)
+Days.4 <- runif(Users[4],min=300,max=365)
+Days <- c(Days.1,Days.2,Days.3,Days.4)
+
+#par(mfrow=c(4,2),oma=c(0,0,2,0))
+par(mfrow=c(2,4),oma=c(0,0,0,0))
+hist(Grams.1,xlab="Grams/Day",xlim=c(0,3),ylab="N (thousands)",main="Occasional")
+hist(Grams.2,xlab="Grams/Day",xlim=c(0,3),ylab="N (thousands)",main="Monthly")
+hist(Grams.3,xlab="Grams/Day",xlim=c(0,3),ylab="N (thousands)",main="Weekly")
+hist(Grams.4,xlab="Grams/Day",xlim=c(0,3),ylab="N (thousands)",main="Daily")
+hist(Days.1,xlab="Days/Year",xlim=c(0,365),ylab="N (thousands)",main=NULL)
+hist(Days.2,xlab="Days/Year",xlim=c(0,365),ylab="N (thousands)",main=NULL)
+hist(Days.3,xlab="Days/Year",xlim=c(0,365),ylab="N (thousands)",main=NULL)
+hist(Days.4,xlab="Days/Year",xlim=c(0,365),ylab="N (thousands)",main=NULL)
+```
+
+Figure 3 shows the daily dose, frequency, and annual dose composite distributions. 
+
+```{r, echo=FALSE, fig.cap="Simulated Quantity Distribution: All Users\n(typical model run)"}
+par(mfrow=c(1,3))
+Grams <- c(Grams.1,Grams.2,Grams.3,Grams.4)
+Days <- c(Days.1,Days.2,Days.3,Days.4)
+GramsYr <- Grams*Days
+#print(length(GramsYr))
+#print("Metric Tons per Year = ",sum(Grams)*sum(Days)/1000000)
+# is giving me "invalid 'digits' argument" error message
+hist(Grams,breaks=10,xlab="Grams/Day",ylab="N (thousands)")
+hist(Days,breaks=10,xlab="Days/Year",ylab="N (thousands)")
+hist(GramsYr,breaks=10,xlab="Grams/Year",ylab="N (thousands)")
+
+# plot(density(GramsYr))
+# doesn't seem to be lognormal, exponential, or weibull
+# suppressPackageStartupMessages(library(qualityTools))
+# par(mfrow=c(2,2))
+# qqPlot(GramsYr, "normal")
+# qqPlot(GramsYr, "log-normal")
+# qqPlot(GramsYr, "exponential", DB = TRUE)
+# qqPlot(GramsYr, "weibull")
+
+# Total Consumption
+vecGrams <- as.vector(c(Grams.1,Grams.2,Grams.3,Grams.4))
+vecDays <- as.vector(c(Days.1,Days.2,Days.3,Days.4))
+vecGramsYr <- vecGrams*t(vecDays)
+totGramsYr <- sum(vecGramsYr)
+# bring back up from per-1000 to full population
+totUsers <- sum(9967, 6133, 3230, 7894, 5729)*1000
+totGramsYr <- totGramsYr*1000
+#print(paste("Total Grams/Year =",prettyNum(totGramsYr, digits=0, big.mark=",",big.interval=3)
+metricTons <- 0.000001*totGramsYr
+metricTons.print <- prettyNum(metricTons, big.mark = ",", format="f", digits=2)
+#print(paste("Total Metric Tons Consumed Per Year:", metricTons.print))
+ondcp <- round((metricTons/5734)*100)
+#print(paste(ondcp,"% of ONCDP's estimated 5,734 metric tons consumed in 2010."))
+```
+
+Perhaps surprisingly, we don't have a good empirical portrait of the true consumption distribution, because existing federal measurement systems do a far better job of assessing prevalence than quantity consumed (Horowitz, MacCoun, & Manski, 2002; Kilmer, Caulkins et al., 2014a).   
+
+But as a rough benchmark, the simulated total grams per year is `r metricTons.print`.  This is `r ondcp` percent of ONDCP's estimate that there were 5,734 metric tons of cannabis consumed in 2010 (Kilmer, Everingham, et al. 2014).  While it is encouraging that the two aggregated estimates are so similar, this partly reflects the fact that both estimates rely on the same federal data.
+
+
+```{r, echo=FALSE}
+# (6) Gini coefficients (consumption)
+# Gini coefficient: 0 = perfect equality; 1 = maximum inequality
+suppressPackageStartupMessages(library(ineq))
+Gini.Grams <- round(ineq(vecGrams, type='Gini'),2)
+Gini.Days <- round(ineq(vecDays, type='Gini'),2)
+Gini.GramsYr <- round(ineq(vecGramsYr, type='Gini'),2)
+```
+
+We can compute Gini coefficients to examine the inequality in the distributions, where 0 = perfect equality and 1 = maximum inequality.  The Gini coefficients for grams/day, days/year, and grams/year are `r Gini.Grams`, `r Gini.Days`, and `r Gini.GramsYr`, respectively.  The extreme skew in grams/year is due to the multiplicative combination of variation in daily doses and in days of use per year.
+
+\section{Modeling Harms}
+
+I use a logistic threshold function to model the dose-response function:
+
+$$(6)\quad { Risk }_{ ij }=\frac { MaxRisk }{ 1+exp(-Shape\cdot [{ DailyDose }_{ ij }-{ Threshold }_{ i }]) }$$
+
+
+The function has three parameters.  *MaxRisk* is the maximum height of the function ("ceiling") and ranges from 0 (no risk of this harm under any dose) to 1 (certain harm under some doses).  *Threshold* is the inflection point -- the dose at which the maximum marginal increase in risk is observed.  The *Shape* parameter determines whether the function is somewhat linear (values near 0), an abrupt step function (large values), or the kind of *S*-shaped sigmoidal function that is most common in dose-response modeling.[^linearity]  
+
+[^linearity]: Note that this nonlinear function can only approximate linear functions that are "regressive" -- i.e., fairly horizontal, implying that risk is largely random and only weakly related to dose. Also note that the specific *Shape* values are scaled relative to the range of doses being modeled and have no absolute interpretation.  Below, Figure 3 shows dose-response curves for three sets of parameter values.
+
+```{r, echo=FALSE, fig.cap="Effects of Threshold and Shape Parameters on Dose-Response Function"}
+# Dose-Response function
+drf <- function(x,mr,sh,th){
+              mr/(1+exp(-sh*(x-th)))
+}
+x <- seq(0,3,by=.05)
+dr.th1 <- drf(x,.01,3,1)
+dr.th2 <- drf(x,.01,8,2)
+dr.th3 <- drf(x,.01,1,1.5)
+plot(dr.th1~x,type="l",xlab="Grams",ylab="Risk (MaxRisk=.01)",ylim=c(0,.01))
+lines(dr.th2~x,lty=2)
+lines(dr.th3~x,lty=3)
+legend("topleft",legend=c("Thresh=1, Shape=3","Thresh=2, Shape=8","Thresh=1.5, Shape=1"),
+       lty=c(1,2,3), bty="n")
+```
+
+Two factors that can modify the dose-response function for some user types are tolerance and titration.  Because these complicate the model, I first examine how the model without them.  Even in the simple case where all users have the same dose-response function, each user type will face a different daily risk for a given category of harm, depending on their dose.  
+
+To calibrate the model (see Appendix A),  I used R's *optim* function to find the MaxRisk parameter value that minimized the mean-squared error match to a benchmark of 380,614 annual incidents of harm.  This benchmark is the average of two estimates: 305,560 annual marijuana admissions in 2013 (TEDS, 2014) and 455,668 marijuana-related emergency room estimates in 2011 (DAWN, 2013). Averaging these values puts the simulations in a range near both series, while at the same time discourating interpretation of the projections as a "forecast" of either series.
+
+Across six combinations of Threshold (0.5, 1 or 2) and Shape (3 or 5), Appendix A shows that the best fit was for Threshold = 0.5 and Shape = 3, for which the best fitting MaxRisk = .00015.  This produced an estimate of 380,791 harm incidents, quite close to the benchmark.
+
+Here are the implied average risks per day of use across user types:
+
+```{r, echo=FALSE, fig.cap="Mean Risk per Day of Use by User Type (without titration or tolerance)"}
+# (4) Simulate risk per daily dose
+mr <- .00015
+th <- .5
+sh <- 3
+Risks.1 <- drf(Grams.1, mr, sh, th) # Occ 
+Risks.2 <- drf(Grams.2, mr, sh, th) # Monthly
+Risks.3 <- drf(Grams.3, mr, sh, th) # Weekly 
+Risks.4 <- drf(Grams.4, mr, sh, th) # Daily
+Risks <- list(Risks.1,Risks.2,Risks.3,Risks.4)
+mRisks <- sapply(Risks,mean)
+names(mRisks) <- c("Occ.","Monthly","Weekly","Daily")
+par(mfrow=c(1,1))
+barplot(mRisks, sub="MaxRisk = .00015, Threshold = 1, Shape = 3")
+mtext("MaxRisk = .00015, Threshold = 1, Shape = 3",side=1,outer=TRUE)
+```
+
+Muliplying each user's daily risk by his or her days of use provides an estimate of annual harms.  Note that the model implies that weekly users account for almost as much harm as daily users, but that's because there are nearly twice as many weekly users as daily users.
+
+```{r, echo=FALSE, fig.cap="Annual Harms by User Type (without titration or tolerance)"}
+# (5) Harms per year
+Harms.1 <- Risks.1*Days.1
+Harms.2 <- Risks.2*Days.2
+Harms.3 <- Risks.3*Days.3 
+Harms.4 <- Risks.4*Days.4 
+Harms <- list(Harms.1,Harms.2,Harms.3,Harms.4)
+names(Harms) <- c("Occasional","Monthly","Weekly","Daily")
+aggHarms <- sapply(Harms,sum)
+names(aggHarms) <- c("Occ.","Monthly","Weekly","Daily")
+barplot(aggHarms, sub="MaxRisk = .00015, Threshold = 1, Shape = 3")
+# Gini coefficient: 0 = perfect equality; 1 = maximum inequality
+vecRisks <- as.vector(c(Risks.1,Risks.2,Risks.3,Risks.4))
+Gini.Risks <- round(ineq(vecRisks, type='Gini'),2)
+vecHarms <- as.vector(c(Harms.1,Harms.2,Harms.3,Harms.4))
+Gini.Harms <- round(ineq(vecHarms, type='Gini'),2)
+```
+
+Thus, without any titration or tolerance, the model implies that weekly and daily users account for the lion's share of the harm. The Gini coefficient for mean risks by type is `r Gini.Risks`, but the Gini coefficient for annual harms is `r Gini.Harms`.
+
+Below, I use a contour plot to show the model's predictions for a range of Shape and Threshold parameter values. Note that as Shape approaches a step-function, harm rises for all thresholds below the standard HeavyDose of 1.6 grams.
+
+![Threshold x Shape (no tolerance or titration)][thxsh]
+
+
+\subsection{Modeling the Effects of Tolerance and Potency on Risk}
+
+The psychopharmacological phenomenon of *tolerance* suggests that a given dose may have dampened effects on regular users.  Chronic cannabis users are known to develop psychopharmacological tolerance to the effects of the drug (Jones, Benowitz, & Herning, 1981; Ramaekers et al., 2010).  As defined by Jones et al. (1981, p.143S): 
+
+> We use the term tolerance to mean a diminished drug effect following repeated doses and a return of effect if dose is increased.”  This implies that the short term effects of increased consumption might taper off over time. 
+
+For example, Gorelick et al. (2013) exposed 13 daily marijuana users to repeated doses of oral synthetic THC (dronabinol) over six days.  Despite an escalating dosage schedule, self-reported effects of intoxication decreased after the second day.  But tolerance may be less of a factor for light users, and it is certainly not relevant to the potential effects of increased potency on new initiates. 
+
+Tolerance can be modeled as an additive, rightward shift in the dose-response threshold (Peper, 2012). Thus, the dose-response equation can be modified as follows:
+
+$$(7)\quad AdjThresh_{ i }=Threshold+{Tolerance}_{ i }\cdot Threshold$$
+
+where by assumption, $0 \le Tolerance \le 1$, and the adjustment is indexed to User type.[^tolvec]  
+
+[^tolvec]:  Specifically, I multiplied the tolerance parameter by a vector of four weights, one per user type.  In the present paper, the weights are either 0 or 1 so they function like toggle switches.  My baseline assumption is that this vector was {0, 0, 1, 1}, so that tolerance, if it occurs, occurs only for Weekly and Daily users.  It would be less complicated to simply have a vector of tolerance parameters, but this approach makes it easier to parametrically "sweep" through levels of tolerance.
+
+Below, I simulate the effects of Tolerance=.50 for Weekly and Daily Users, assuming no tolerance for Occasional and Monthly users.  As expected, tolerance reduces harm, but its effect interacts with threshold: Tolerance has a large influence for high thresholds, but very little influence for low thresholds.  Note that the calibration exercise, while hardly conclusive, suggests that a threshold near 0.5g fits recent data better than thresholds of 1 or 2.
+
+\pagebreak
+
+![Threshold x Tolerance (Shape=3, no  titration)][thxtol]
+
+Since many if not most of the health and safety risks of cannabis are thought to be attributable to THC,[^attributable] we also need to adjust the dose-response function to account for changes in *potency*. For simplicity, and so that the model can be calibrated to aggregate consumption data, the SimSemilla model operationalizes cannabis dosage strictly by weight (grams), without respect to potency. But a key objective of this modeling exercise is to gain insights into the possible consequences of changes in THC potency, as might occur via some combination of market forces and regulatory and/or tax policies (see Caulkins et al., 2015; MacCoun & Mello, 2015).  
+
+[^attributable]: This is a simplification.  Some ingredients (e.g., CBD) may even mitigate risk.  Also, some health and safety risks are probably attributable to the drug's illegality rather than its psychopharmacological effects (MacCoun, Schelling, & Reuter, 1996).  Because I am not attempting to model total harm across categories, this does not pose an obstacle to the analysis.
+
+The standard way to model increases in pharmacological potency is to assume that it raises lowers the dose-response threshold in a subtractive fashion (Peper, 2012). Thus, the risk equation must be modified to account for varying levels of tolerance (by User type) as well as changes in potency, as follows:
+
+$$(8)\quad AdjThresh_{ i }=(Threshold+{ Tolerance}_{ i }\cdot  Threshold) / PotencyRatio$$
+
+where $0 \le TolAdj \le 1$ and I here limit my analysis to the range $1 \le PotencyRatio \le 2$.
+
+The modified risk equation is thus:
+
+$$(9)\quad AdjRisk_{ i }=\frac { MaxRisk }{ 1+exp(-Shape\cdot [{ AdjDailyDose }_{ ij }-{ Adj }Thresh_{ i }]) }$$
+
+Below, I show the effects of potency and tolerance adjustments on an initial threshold of 1g.
+
+
+```{r, echo=FALSE, fig.cap="Effects of Tolerance and Potency on Dose-Response Function"}
+# Dose-Response function
+
+adj.drf <- function(x,mr,sh,th,tol,pot){
+  th <- (th + tol*th)/pot
+  mr/(1+exp(-sh*(x-th)))
+}
+mr <- .00015
+pot <- 1
+x <- seq(0,2,by=.05)
+
+par(mfrow=c(1,2))
+
+# tolerance
+dr.th1 <- adj.drf(x,.01,3,1,0,1)
+dr.th2 <- adj.drf(x,.01,3,1,.5,1)
+plot(dr.th1~x,type="l",xlab="Grams",ylab="Risk (MaxRisk=.01)",ylim=c(0,.01),lty=2)
+lines(dr.th2~x,lty=1)
+#arrows(x0=1.9, y0=.004, x1=2.3, y1=.004, angle=20, length=.10)
+legend("bottomright",legend=c("no adj.","TolAdj"),
+lty=c(2,1), bty="n")
+
+# potency
+dr.th1 <- adj.drf(x,.01,3,1,0,1)
+dr.th2 <- adj.drf(x,.01,3,1,0,2)
+plot(dr.th1~x,type="l",xlab="Grams",ylab="Risk (MaxRisk=.01)",ylim=c(0,.01),lty=2)
+lines(dr.th2~x,lty=1)
+#arrows(x0=1.8, y0=.004, x1=1.4, y1=.004, angle=20, length=.10)
+legend("bottomright",legend=c("no adj.","PotAdj"),
+lty=c(2,1), bty="n")
+```
+
+\section{Modeling Effects of Potency on Use: Titration}
+
+There is an popular argument in the reform literature that potency doesn’t matter because people can "titrate" their dosage to compensate for a stronger product.  This argument dates back at least to Zimmer and Morgan (1995) and has been repeated by many authors over the years.  There is a small empirical literature examining whether users consume less marijuana when the THC content is higher (see Freeman et al., 2014; Hart et al., 2002; Heishman, Stitzer, & Yingling, 1989; Hughes et al., 2014; Korf et al., 2007; van der Pol et al., 2014).  
+
+When assessing this literature, it is useful to distinguish three different questions that are often conflated.  First, is there a statistically significant negative association between THC potency and quantity of marijuana consumed?  The answer to this question is generally “yes,” though the association is smaller for less experienced users, and even positive for a subset of users (see Korf et al., 2007).  Second, is there a homeostatic effect, such that users titrate approximately enough to maintain a constant rate of THC irrespective of potency?  This is the idea people have in mind when they argue that potency is irrelevant, but it finds little support (Freeman et al., 2014; van der Pol et al., 2014; cf. Hart et al., 2002).  Finally, even if people are able to titrate their dose, do they actually do so?  This is the competence-performance distinction in cognitive psychology.  Most of these studies test the user’s competence to self-adjust their dose.  They do not tell us about the user’s performance in real-world settings, when they aren’t being studied.  Marijuana use involves habitual patterns (“I’ll have a bowl [joint, vape] now, and one before I go to bed”) as well as ritual-like patterns of social sharing (Hughes et al., 2014).  And as noted above, Korf et al. (2007) show that some users actually consume more when potency is higher.
+
+We cannot yet resolve this issue empirically, but we can at least model it and examine the effects of a range of different assumptions about titration.
+
+Define *titration* as the change in dose in response to a change in THC potency.  Assume that $0\le { Titration }_{ i }\le 1$, where 0 = No titration, 1 = Perfect titration, and values above 1 would indicate *overtitration* (a possibility I ignore in this paper).  Perfect titration is homeostatic; the person adjusts their dose to hold potency constant.  
+
+Assume for simplicity that OldDose = `r HeavyDose` grams.  Then the function should double the dose in response to a halving of potency, and halve the dose in response to a doubling of THC Potency.  To achieve this, I model titration as follows:
+
+$$(10)\quad { NewDose }_{ ij }=OldDose \cdot { \left( \frac {1}{ { \Omega  }_{ Potency } }  \right)  }^{ {Titr}_{i} }$$ 
+
+where
+
+$$(11)\quad { \Omega  }_{ Potency }=\frac { NewPotency }{ OldPotency }$$ 
+
+and the Titr parameter is indexed to i = User{ Occasional, Monthly, Weekly, Daily} to allow for different titration values for different user types.[^titrvec]  
+
+[^titrvec]:  As with tolerance, I multiplied the titration parameter by a vector of User types; the baseline assumption was {0, 1, 1, 1} so that Occasional users can't titrate.  In Appendix B I consider the alternative assumption {0, 1, 1, 0} where, for different reasons, Daily users also can't (or won't) titrate.
+
+Figure 5 shows an illustration of titration for users who were using a dose of 1 gram at the old potency level:
+
+```{r, echo=FALSE,fig.cap="Effects of Change in Potency on Dose for Three Levels of Titration"}
+OldDose <- 1
+pot <- seq(.5,2,by=.5)
+Titration <- function(Titr){
+  OldDose*(1/pot)^Titr
+}
+Titr0.0 <- Titration(0)
+Titr0.5 <- Titration(.5)
+Titr1.0 <- Titration(1)
+out <- rbind(Titr0.0,Titr0.5,Titr1.0)
+barplot(out,beside=TRUE,xlab="NewPotency/OldPotency",ylab="NewDose",
+        names.arg=pot, legend=c("Titr=0","Titr=0.5","Titr=1"))
+abline(h=OldDose,lty=3)
+```
+
+
+\section{Simulating the Effects of Changes in Potency}
+
+I can convey a wide range of model behavior by using a 3 x 3 array of contour plots.
+
+Each contour plot varies Threshold on the horizontal axis; note that a lower threshold denotes greater risk.  Each plot varies Potency Ratio (New/Old) on the vertical axis, with no change in potency at the bottom and a doubling of potency at the top.  
+
+Model projections of the incidence of harm are denoted by colors ranging from white (no harm) through yellow and orange to red (high incidence of harm).  Note that within each contour, the upper left corner is the most pessimistic combination of threshold and potency, and the lower right corner is the most optimistic combination of threshold and potency.
+
+Moving from left to right, the three columns show model behavior for titration values of 0, 0.5, and 1.  Moving from top to bottom, the three rows show model behavior for tolerance values of 0, 0.5, and 1.
+
+Thus, the upper left plot shows model behavior under the most pessimistic set of assumptions about tolerance and titration; the lower right plot shows model behavior under the most optimistic set of assumptions.
+
+The fanning contour lines show the nonlinear effects of the model.  A strictly vertical contour lines show that potency has no effect at that threshold value.  Contour lines that fan to the left suggest that potency increases harm.  
+
+Recall that the calibration analysis showed that the model best fits actual outcome rates with lower threshold values (around .5), though this result is more suggestive than definitive.  The model, at least with these parameter values, suggests that whether increases in potency will result in increases in harm depends greatly on what one is willing to assume about threshold, tolerance, and titration.  At very low thresholds (below 0.5 grams), potency does not matter a lot; this is a kind of "ceiling" effect.  At moderate to high thresholds, increased potency increases harm, and for high thresholds, this is true even under optimistic assumptions about tolerance and titration.
+
+The reader is cautioned that some of the projections in the contour plot fall below existing rates for treatment admissions and emergency room incidents.  This is at least suggestive that, if the model is valid, *we may not currently reside in those (optimistic) regions of parameter space.*
+
+![Effects of Threshold and Potency With and Without Tolerance and Titration ][thxpot]
+
+
+\section{Simulating the Effects of Increased Daily Doses}
+
+The SimSemilla model can also be used for "what it" analyses of changes in the prevalence, frequency, or quantity of consumption -- or changes in how those attributes vary across User types.
+
+As a simple illustration, below I plot results when the baseline *HeavyDose* rises 25%, from 1.6 grams to 2 grams. Note that I did so without raising the MaxRisk level.  Realistically, the maximum risk would most likely rise with a 25% increase in dose, but raising MaxRisk would increase risk by assumption rather than through the workins of the mode.  But given that constraint, the model suggests that heavier doses still produce an increase in harm, one that is not greatly mitigated by either tolerance or titration.
+
+!["What if" Analysis: *HeavyDose* Rises from 1.6 to 2 Grams][raisehd]
+
+\section{Discussion}
+
+\subsection{Caveats}
+
+This is a draft of a work in progress.  I am eager for readers' suggestions about improving or validating the model, and it is very possible that the model will evolve before it reaches published form.  If so, the projections might change in important ways.
+
+There are notable limitations of this model (and indeed, of any model).  The model does not produce "findings"; rather, it provides projections based on theory, and the model is only as good as its theoretical assumptions.  The assumptions take three forms.  First, there are the equations, which may or may not provide a valid account of the true processes at work.  Of the equations here, I am most confident in the consumption modeling and the basic dose-response modeling (in part because the latter allows such a wide range of possible functional forms).  I am somewhat less confident in the tolerance and titration modeling because it is conceiveable that these processes work differently than the way I have modeled them, at least for cannabis. The model is almost surely correct in its ordinal predictions about these processes, but the true functional forms may differ; e.g., psychophysical functions can take various nonlinear forms (power functions, logarithmic functions, etc.).
+
+A second kind of assumption involves the variance in these behaviors across and within different types of users.  The model allows for these assumptions to be varied, but it would be useful to better ground these assumptions in actual data on cannabis consumption.  In particular, which users are able to titrate their dose, and to what extent?  Of those who are able, which ones actually choose to do so, and when?
+
+The third kind of assumption involves the specific parameter values:  Shape, Threshold, MaxRisk, Tolerance, Titration.  Again, it would be very helpful to base these on actual behavior, but the existing research literature appears to be inadequate for that task. But because I explicitly provide projections under a wide range of parameter values, the model and its simulations hopefull help us to better understand and anticipate the range of possible responses.
+
+\subsection{Some Tentative Insights}
+
+With those caveats in mind, I do think the model in its present form provides some insights and perhaps provides support for some claims others have already made about cannabis use:
+
+First, there is no inexorable link between being a cannabis user and experiencing harm, and this is true for most possible assumptions about the threshold and shape of the dose-response function.  Harms are clearly influenced by the frequency and quantity of use; if users use more per session, or use more often, they risk greater harm.
+
+Second, the threshold and shape of the dose-response function clearly matter a lot, and we need to know more about where we are currently located in that parameter space for any given type of harm, in order to better understand where we might be heading if consumption patterns change.  In considering this point, it is important to remember that some of the model projections are *below* current levels of some harms (treatment admissions, emergency room incidents).  To the extent that the model itself is valid in its assumptions, that suggests that some combinations of threshold and shape are likely to be invalid.  In particular, the regions to the right side of my contour plots are probably too optimistic.  We are more likely to occupy some region toward the left, with lower (and hence riskier) thresholds.
+
+And third, whether we should be concerned about cannabis potency depends very much on the extent to which tolerance and titration operate, and for which types of users they are operative.  To know whether further increases in potency are innocuous or dangerous, we need to know more about tolerance and titration.
+
+\subsection{Future Steps}
+
+I hope the model is also useful as a way of making explicit our ignorance -- what it is we are ignorant, and what it is we need to know:more research on dose-response functions, tolerance, and titration; improved causal identification strategies for empirical work on dose-harm relationships.
+
+The model also enables exploratory "what if" investigations.  In the current draft, I only provide one example -- an increase in daily doses.  But I plan additional investigations.  Using the model, it is possible to compare different ways of achieving the same increase total consumption (metric tons) -- via a shift in average dose, a shift in frequency of dose, or a shift in prevalence (number of users).  Do these three paths differ in their implications for harm?  Is it more harmful, or less, to increase prevalence vs. frequency vs. quantity?
+
+By making the model dynamic, and allowing feedback, it is possible to examine more systematically how changes in average harm per dose might translate into changes in quantity consumed. This would also allow a comparison of prevalence reduction, quantity reduction, and harm reduction as strategies for reducing total drug-related harm (see MacCoun, 1998; MacCoun & Reuter, 2001).
+
+Finally, it might be useful to "dock" or couple the SimSemilla to one of various existing models that examine how prevalence and consumption change as a function of prices, taxes, and other factors (e.g., Caulkins, Kilmer, et al., 2015;  Everingham & Rydell, 1994; Paddock et al., 2012).
+
+Once I reach a point where I am confident in the basic workings of the model, I plan to make it accessible for others to explore, as an online R Shiny interactive app (with sliders to control parameter values) and as open R code on GitHub (https://github.com), so that others can explore, modify, or extend the model in a software environment that carefully documents alternative versions of the code.  My hope is that this might serve a "if you build it they will come" kind of role -- an invitation to everyone in the cannabis policy analysis community to collectively advance our thinking about these issues.
+
+
+\section{Appendix A: Calibrating the Basic Model}
+
+To calibrate the full model, I examined all 18 combinations of Threshold (.05, 1, or 2) x Shape (3 or 5) x Tolerance (0, .5, or 1).  In each run, I used R's *optim* function to find the MaxRisk parameter value that minimized the squared difference between the projected harms and a benchmark of 380,614 annual incidents of harm.  This benchmark is the average of two estimates: 305,560 annual marijuana admissions in YEAR (TEDS, 2014) and 455,668 marijuana-related emergency room estimates in 2011 (DAWN, 2013).  Note that while the model has many parameters, each optimization run had a single free parameter, MaxRisk.
+
+In each run, I also estimated the total consumption in metric tons, which in every case came quite close to ONCDP's estimated 5,734 metric tons consumed in 2010.  (Note that unlike the harm benchmark, the model did not fit total consumption as an explicit criterion.)  This is probably best interpreted as "calibration" (the model can fit existing data), not necessarily "validation" (the model is the correct causal account of the phenomena those data represent).
+
+In the table below, I show the 18 scenarios, rank ordered from best to worst fit.  Based on this analysis, it appears that Threshold = 0.5 and Shape = 3 provide a good fit at all three Tolerance levels, with MaxRisk = .0002, .0001, and .0001 for Tolerance values of 0, 0.5, and 1, respectively.
+
+\pagebreak
+Table A1.  Results of Calibration Analysis
+
+Thresh | Shape | Tol | Best MR | MSE      | M.Tons| Harms   | Fit (1=best) 
+------ | ----- | --- | ------- | -------- | ----- | ------- | -------------
+0.50   | 3     | 0.0 | 0.00022 | 3.35E-02 | 5,651 | 380,791 |  1 
+0.50   | 3     | 0.5 | 0.00013 | 2.91E+00 | 5,662 | 380,280 |  2 
+0.50   | 3     | 1.0 | 0.00011 | 5.89E+00 | 5,664 | 381,971 |  3 
+0.50   | 5     | 0.0 | 0.00023 | 1.13E+01 | 5,646 | 381,259 |  4 
+0.50   | 5     | 0.5 | 0.00012 | 8.06E+02 | 5,658 | 381,316 |  8
+0.50   | 5     | 1.0 | 0.00010 | 3.99E+01 | 5,642 | 380,220 |  7
+1.00   | 3     | 0.0 | 0.00081 | 1.58E+03 | 5,663 | 387,934 | 11
+1.00   | 3     | 0.5 | 0.00023 | 3.13E+03 | 5,659 | 380,236 | 13
+1.00   | 3     | 1.0 | 0.00012 | 1.12E+05 | 5,678 | 385,282 | 17
+1.00   | 5     | 0.0 | 0.00051 | 2.60E+01 | 5,645 | 376,614 |  6
+1.00   | 5     | 0.5 | 0.00022 | 1.09E+03 | 5,640 | 380,667 |  9
+1.00   | 5     | 1.0 | 0.00013 | 1.32E+03 | 5,662 | 379,649 | 10
+2.00   | 3     | 0.0 | 0.00671 | 6.94E+03 | 5,665 | 380,174 | 15
+2.00   | 3     | 0.5 | 0.00169 | 2.35E+03 | 5,652 | 380,609 | 12
+2.00   | 3     | 1.0 | 0.00052 | 1.86E+01 | 5,661 | 380,711 |  5
+2.00   | 5     | 0.0 | 0.05906 | 9.39E+06 | 5,654 | 369,464 | 18
+2.00   | 5     | 0.5 | 0.00565 | 9.07E+04 | 5,637 | 386,752 | 16
+2.00   | 5     | 1.0 | 0.00080 | 3.50E+03 | 5,665 | 375,336 | 14
+
+
+\section{Appendix B: Sensitivity Analyses}
+
+There is little detectable effect of *raising the threshold's shape from 3 to 5*; it is possible to raise the shape even higher to approximate a step function, but this seems implausible.
+
+![Shape raised from 3 to 5 ][raiseshape]
+
+On the other hand, *lowering the shape parameter from 3 to 1* has a profound effect.  The lower shape has two effects.  First, it is more linear so the threshold parameter has less impact; in essence, risks become more random.  Second, it reduces risk overall.
+
+![Shape lowered from 3 to 1 ][lowershape]
+
+The next plot shows the model's predictions under the assumption that unlike Montly and Weekly users, *Daily users are either unable or unwilling to titrate* their dose.  This has the effect of shrinking the regions of lower risk, but the effect is not dramatic.
+
+![Assume Daily Users Don't Titrate ][titrvec0110]
+
+The next plot shows the projections under an alternative assumption that occasional users consume 25% of a daily user's dose, rather than 33%.  The *alternative fracs vector* is {.25, .5, .75, 1}:
+
+![Allowing fracs to rise from .25 rather than .33 ][altfracs]
+
+
+\section{References}
+
+Caulkins, J. P. (2014).  The real dangers of marijuana.  *National Affairs*.
+
+Caulkins, J. P., Kilmer, B., Kleiman, M. A. R., MacCoun, R. J., Midgette, G., Oglesby, P., Pacula, R. L., & Reuter, P. H. (2015). *Considering marijuana legalization: Insights for Vermont and other jurisdictions.* Santa Monica, RAND.
+
+DAWN (2013).  *Drug Abuse Warning Network, 2011: Selected Tables of National Estimates of Drug-Related Emergency Department Visits.* Rockville, MD: Center for Behavioral Health Statistics and Quality, SAMHSA.
+
+Everingham, S.S., & Rydell, C. P. (1994). *Modeling the demand for Cccaine.* MR-332-ONDCP/A/DPRC, Santa Monica, RAND.
+
+Fagin, D. (2012).  Learning curve.  *Nature,* 490, 462-465.
+
+Freeman, T.P., Morgan, C.J., Hindocha, C., Schafer, G., Das, R.K., & Curran, H.V. (2014).   Just say “Know”: How do cannabinoid concentrations influence users’ estimates of cannabis potency and the amount they roll in joints?  *Addiction, 109,* 1684-1694
+
+Gorelick, D. A., et al. (2013).  Tolerance to effects of high-dose oral $\Delta$ 9-tetrahydrocannabinol and plasma cannabinoid concentrations in male daily cannabis smokers.  *Journal of Analytical Toxicology, 37,* 11–16.
+
+Hall, W. (2014). What Has research over the past two decades revealed about the adverse health effects of recreational cannabis use?  *Addiction, 110,* 2014.
+
+Hart, C. L., Haney, M., Ward, A. S., Fischman, M. W., & Foltin, R. W. (2002).  Effects of oral THC maintenance on smoked marijuana self-administration.  *Drug and Alcohol Dependence, 67,* 301–309.
+
+Heishman, S. J., Stitzer, M. L., & Yingling, J. E. (1989).  Effects of tetrahydrocannabinol content on marijuana smoking behavior, subjective reports, and performance. *Pharmacology, Biochemistry, and Behavior, 34,* 173–179.
+
+Horowitz, J. L., MacCoun, R. J., & Manski, C. F. (2002). The National Research Council report "Informing America's policy on illegal drugs: What we don't know keeps hurting us"; reply to the comments. *Addiction, 97,* 663-665.
+
+Hughes, J. R., Fingar, J. R., Budney, A. J., Naud, S., Helzer, J. E., & Callas, P. W. (2014).  Marijuana use and intoxication among daily users: An intensive longitudinal study.  *Addictive Behaviors, 39,* 1464-1470.
+
+Jones, R. T., Benowitz, N. L., & Herning, R. L. (1981).  Clinical relevance of cannabis tolerance and dependence. *Journal of Clinical Pharmacology, 21,* 143S-152S.
+
+Kilmer, B., Caulkins, J. P., Midgette, G., Dahlkemper, L., MacCoun, R. J., & Pacula, R. L. (2014). *Before the grand opening: Measuring Washington State’s marijuana market in the last year before legalized commercial sales.* Santa Monica, RAND.
+
+Kilmer, B., Susan S. Everingham, Jonathan P. Caulkins, Gregory Midgette, Rosalie Liccardo Pacula, Peter H. Reuter, Rachel M. Burns, Bing Han and Russell Lundberg. *What America's Users Spend on Illegal Drugs: 2000–2010.* Santa Monica, CA: RAND Corporation, 2014.  Prepared for ONDCP. http://www.rand.org/pubs/research_reports/RR534.html.
+
+Korf, D. J., Benschop, A., & Wouters, M. (2007).  Differential responses to cannabis potency: A typology of users based on self-reported consumption behavior. *International Journal of Drug Policy, 18,* 168–176.
+
+MacCoun, R. J. (1998). Toward a psychology of harm reduction. *American Psychologist, 53,* 1199-1208.
+
+MacCoun, R. J. (2010). The implicit rules of evidence-based drug policy, updated. *Addiction, 105,* 1335-1336.
+
+MacCoun, R. J., & Mello, M. M. (2015). Half baked—The retail promotion of marijuana edibles. *New England Journal of Medicine, 372*, 989-991.
+
+MacCoun, R. J., & Reuter, P. (2001). *Drug war heresies: Learning from other vices, times, and places.*  Cambridge University Press. 
+
+MacCoun, R. J., Reuter, P., & Schelling, T. (1996). Assessing alternative drug control regimes. *Journal of Policy Analysis and Management, 15,* 1-23.
+
+NSDUH (2013). *National Survey on Drug Use and Health* (Table 6.1A).  Rockville, MD: Center for Behavioral Health Statistics and Quality, SAMHSA. 
+
+Paddock, S. M., Kilmer, B. Caulkins, J. P., Booth, M. J., & Pacula, R. L. *An epidemiological model for examining marijuana use over the life course. *Epidemiology Research International, 2012*.
+
+Peper, A. (2012).  Intermittent adaptation: A mathematical model of drug tolerance, dependence, and addiction.  In B. Gutkin & S. H. Ahmed (eds.), *Computational neuroscience of drug addiction* (pp. 19-56).  Springer.
+
+Ramaekers, J. G., et al. (2010).  Tolerance and cross-tolerance to neurocognitive effects of THC and alcohol in heavy cannabis users.  *Psychopharmacology, 214,* 2042-2066.
+
+TEDS (2014).  *Treatment Episode Data Set (TEDS): 2002-2012.*  Rockville, MD: Center for Behavioral Health Statistics and Quality, SAMHSA.
+
+van der Pol, P., Liebregts, N., Brunt, T., Amsterdam, J., Graaf, R., Korf, D. J. et al. (2014).  Cross-sectional and prospective relation of cannabis potency, dosing and smoking behaviour with cannabis dependence: an ecological study.  *Addiction, 109,* 1101–1109.
+
+Zimmer, L., & Morgan, J. P. (1997).  *Marijuana myths, marijuana facts: A review of the scientific evidence.*  Lindesmith Center.
+
+
+[thxsh]: thxsh_hd16_sh3_tolvec0011_titrvec0111_8781.pdf
+[thxtol]: thxtol_hd16_sh3_tolvec0011_titrvec0111_8781.pdf
+[thxpot]: thxpot_hd16_sh3_tolvec0011_titrvec0111_8781.png
+[raiseshape]: raiseshape_hd16_sh6_tolvec0011_titrvec0111_9187.pdf
+[lowershape]: lowershape_hd16_sh1_tolvec0011_titrvec0111_2037.pdf
+[titrvec0110]: titrvec0110_hd16_sh3_tolvec0011_titrvec0110_7710.pdf
+[altfracs]: altfracs_hd16_sh3_tolvec0011_titrvec0111_4312.pdf
+[raisehd]: raisehd_hd20_sh3_tolvec0011_titrvec0111_4478.pdf
