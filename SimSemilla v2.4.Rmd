@@ -193,6 +193,8 @@ Simulate.it <- function(tag, mr, hd, sh, th, tol, pot, titr){
   
   # (6) Gini coefficients
   # Gini coefficient: 0 = perfect equality; 1 = maximum inequality
+  # Represents distribution of harms across user type, i.e. Pareto Rule-ness
+  
   vecGrams <- as.vector(c(Grams.1,Grams.2,Grams.3,Grams.4))
   Gini.Grams <- round(ineq(vecGrams, type='Gini'),2)
   vecDays <- as.vector(c(Days.1,Days.2,Days.3,Days.4))
@@ -320,6 +322,7 @@ th <- threshold
 tol <- 0
 pot <- 1
 titr <- 0
+# TODO: 
 for(i in 1:21){  #  titr
   for(j in 1:21){ # th
         ptag <- "Titration effect"

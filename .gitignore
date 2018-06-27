@@ -4,5 +4,15 @@
 .Ruserdata
 *.pdf
 .swp
+*.csv
 *.Rproj
 .DS_Store
+*.aux
+*.ps
+*.log
+*.dvi
+*.tex~
+*.tex
+*.out
+*.fdb_latexmk
+*.fls
