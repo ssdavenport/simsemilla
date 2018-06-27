@@ -1,0 +1,709 @@
+---
+title: "SimSemilla v2.4"
+author: "Rob MacCoun"
+output: html_document
+date: '`r format(Sys.time(), "%Y %B %d")`'
+---
+
+Version 2 is a major revision, with revised functions for tolerance, titration, and potency adjustment, as well as default parameters informed by the v1.9 calibration analysis of 18 different combinations of Threshold, Shape, and Tolerance.
+
+Unlike v2.0, 2.1 uses raw harms (not divided by baseline harms), and corrects mistake in Grams.4 code in previous version.  v2.2 provides better file naming and documentation. v2.3 was an exploration of alternative plot axes.
+
+v2.4: Updated USERS using NSDUH 2015 data. For potency paper, based on comments, I've decided to simplify by focusing on titration in main analysis and saving tolerance for sensitity analysis (footnotes or appendix).
+
+
+```{r}
+
+ver.name <- "v2.4"
+harm.ceiling <- 700
+
+# start the clock
+print(ptm0 <- proc.time())
+
+library(triangle)
+library(lattice)
+library(latticeExtra)
+library(ineq)
+options(scipen=999)
+
+# Set up directories for output
+rtag <- floor(runif(1, 1000,9999))
+# 
+# knitr complains about this but it still seems to work:
+topDir = paste(ver.name, Sys.Date(), rtag, sep="_")
+dir.create(topDir)
+setwd(topDir)
+#
+subDir.plots <- paste("plots/", sep="")
+dir.create(paste(subDir.plots,sep=""))
+subDir.cellStats <- paste("cellStats/", sep="")
+dir.create(subDir.cellStats)
+subDir.mainStats <- paste("mainStats/", sep="")
+dir.create(subDir.mainStats)
+
+# = = = = = = = = = = = = = = = = = = = = = = = = = = = = = =
+# CONSTANTS
+
+# Number of Users of Each Type (1000s)
+# data from NSDUH 2015 Table 6.1A
+# Occasional, Monthly, Weekly, Daily
+# (allow each "user" to stand in for 1000 users)
+Users <- c(10738, 6379, 3588+8807, 6532)
+# Much slower version:
+#Users <- Users*1000
+names(Users) <- c("Occasional","Monthly","Weekly","Daily")
+
+# From Kilmer et al WA report: 
+#     1.6 g/day for daily or near daily users
+#     1/2 or 1/3 of that for once/monthly = i.e., .53g to .8g
+#     Note that joint is about .4 to .5g
+# Version 1: (linear from .33 to 1)
+fracs <- c(0.33, 0.553, .776, 1)
+## Alternative assumptions:
+#fracs <- c(0.25, 0.33, 0.50, 1.00)
+#fracs <- c(0.25, 0.5, 0.75, 1)
+names(fracs) <- c("Occasional","Monthly","Weekly","Daily")
+
+# dose scale in grams (for any drf() plotting)
+dose.axis <- seq(0,3,by=.15) # length is 21
+
+# = = = = = = = = = = = = = = = = = = = = = = = = = = = = = =
+# PARAMETERS
+# for each, create baseline value (name) plus vector (vName) for sweeping
+# set all IV vectors to same length to facilitate comparisons
+# (e.g., length(seq(0,1,.1)) = 11)
+# I've selected parameter ranges that produce comparable outcome ranges
+# because goal of these plots is to understand how the variables interact,
+# rather than to make forecasts.
+
+# max risk per dose (argument is called 'mr')
+# see 'SimSemilla v1.9 calibration analysis' file
+maxRisk <- 0.00015
+vMaxRisk <- seq(0,.001,by=.00005) # length is 21
+
+# heavy dose (arg is 'hd') 
+heavyDose <- 1.6  # Kilmer et al (2013) best est is 1.6g day
+vHeavyDose <- seq(1,2,by=.05) # length is 21
+hdlab <- paste("hd", paste(as.character(heavyDose*10), collapse = ""), sep="")
+
+# shape parameter (called "Clarity" in MacCoun (2012); arg is 'sh')
+shape <- 3
+vShape <- seq(1,5,.2) # length is 21
+shlab <- paste("sh", paste(as.character(shape), collapse = ""), sep="")
+
+# threshold parameter (in grams; arg is 'th')
+threshold <- 0.5
+vThreshold <- seq(.25,1.75,by=.075) # length 21
+
+# tolerance parameter (arg is 'tol')
+tolerance <- 0.5
+vTolerance <- seq(0,1,by=.05) # length is 21
+# Note that I apply tolerance to Daily and Weekly
+# No tolerance for Occ and Monthly users
+tolvec <- c(0,0,1,1)
+tollab <- paste("tolvec", paste(as.character(tolvec), collapse = ""), sep="")
+
+# potency parameter (NewPotency/OldPotency; arg is 'pot')
+potencyRatio <- 1 # implies no change
+vPotencyRatio <- seq(1,2,by=.05) # length = 21
+
+# titration parameter (arg is 'titr')
+# 0 is no titration, 1 is 1:1 exact titration (homeostatis)
+titrate <- 0
+vTitrate <- seq(0,1,by=.05) # length is 21
+titrvec <- c(0,1,1,1) # default is Occ can't titrate, others can
+titrlab <- paste("titrvec", paste(as.character(titrvec), collapse = ""), sep="")
+
+# = = = = = = = = = = = = = = = = = = = = = = = = = = = = = =
+# FUNCTIONS
+
+# Titration function
+adj.dose <- function(hd, pot, titr){
+ hd*(1/pot)^titr
+}
+
+# Dose-Response function
+drf <- function(x, mr, sh, th){
+  mr/(1+exp(-sh*(x-th)))
+}
+
+# Threshold adjustment function: 
+th.chg <- function(th, tol, pot){
+   (th + tol*th)/pot
+}
+
+# Main simulation function
+Simulate.it <- function(tag, mr, hd, sh, th, tol, pot, titr){
+ 
+  # (1) GramsDay is best guess for each user type
+  GramsDay <- hd*fracs
+  
+  # (2) Now simulate a distribution of grams/day for each type
+  # and then apply titration adjustment using adj.dose function.
+  Grams.1 <- rtriangle(Users[1], a=.5*GramsDay[1],
+                       b=1.5*GramsDay[1], GramsDay[1])
+  Grams.1 <- adj.dose(Grams.1,pot,titr*titrvec[1]) 
+  Grams.2 <- rtriangle(Users[2], a=.5*GramsDay[2],
+                       b=1.5*GramsDay[2], GramsDay[2])
+  Grams.2 <- adj.dose(Grams.2,pot,titr*titrvec[2]) 
+  Grams.3 <- rtriangle(Users[3], a=.5*GramsDay[3],
+                       b=1.5*GramsDay[3], GramsDay[3])
+  Grams.3 <- adj.dose(Grams.3,pot,titr*titrvec[3]) 
+  Grams.4 <- rtriangle(Users[4], a=.5*GramsDay[4],
+                       b=1.5*GramsDay[4], GramsDay[4])
+  Grams.4 <- adj.dose(Grams.4,pot,titr*titrvec[4]) 
+  Grams <- list(Grams.1,Grams.2,Grams.3,Grams.4)
+  mGrams <- sapply(Grams,mean)
+  names(mGrams) <- c("Occasional","Monthly","Weekly","Daily")
+  
+  # (3) Now simulate days used per year
+  Days.1 <- runif(Users[1],min=1,max=11)
+  Days.2 <- runif(Users[2],min=12,max=49)
+  Days.3 <- runif(Users[3],min=50,max=299)
+  Days.4 <- runif(Users[4],min=300,max=365)
+  Days <- list(Days.1,Days.2,Days.3,Days.4)
+  mDays <- sapply(Days,mean)
+  names(mDays) <- c("Occasional","Monthly","Weekly","Daily")
+  
+  # (4) Simulate risk per daily dose
+  newth.1 <- th.chg(th, tol*tolvec[1], pot) # Occ - No tol
+  Risks.1 <- drf(Grams.1, mr, sh, newth.1) 
+  newth.2 <- th.chg(th, tol*tolvec[2], pot) # Monthly - no tol
+  Risks.2 <- drf(Grams.2, mr, sh, newth.2) 
+  newth.3 <- th.chg(th, tol*tolvec[3], pot) # Weekly - tol
+  # Alternative assumption: No tolerance if weekly user
+  # newth.3 <- th.chg(th,0,pot)
+  Risks.3 <- drf(Grams.3, mr, sh, newth.3) 
+  newth.4 <- th.chg(th, tol*tolvec[4], pot) # Daily - tol
+  Risks.4 <- drf(Grams.4, mr, sh, newth.4) 
+  Risks <- list(Risks.1,Risks.2,Risks.3,Risks.4)
+  names(Risks) <- c("Occasional","Monthly","Weekly","Daily")
+  mRisks <- sapply(Risks,mean)
+  
+  # (5) Harms per year
+  Harms.1 <- Risks.1*Days.1
+  Harms.2 <- Risks.2*Days.2
+  Harms.3 <- Risks.3*Days.3 
+  Harms.4 <- Risks.4*Days.4 
+  Harms <- list(Harms.1,Harms.2,Harms.3,Harms.4)
+  names(Harms) <- c("Occasional","Monthly","Weekly","Daily")
+  mHarms <- sapply(Harms,mean)
+  harmSums <- sapply(Harms,sum)
+  totHarms <- sum(Harms.1,Harms.2,Harms.3,Harms.4)
+  
+  # (6) Gini coefficients
+  # Gini coefficient: 0 = perfect equality; 1 = maximum inequality
+  vecGrams <- as.vector(c(Grams.1,Grams.2,Grams.3,Grams.4))
+  Gini.Grams <- round(ineq(vecGrams, type='Gini'),2)
+  vecDays <- as.vector(c(Days.1,Days.2,Days.3,Days.4))
+  Gini.Days <- round(ineq(vecDays, type='Gini'),2)
+  vecGramsYr <- vecGrams*t(vecDays)
+  Gini.GramsYr <- round(ineq(vecGramsYr, type='Gini'),2)
+  vecRisks <- as.vector(c(Risks.1,Risks.2,Risks.3,Risks.4))
+  Gini.Risks <- round(ineq(vecRisks, type='Gini'),2)
+  vecHarms <- as.vector(c(Harms.1,Harms.2,Harms.3,Harms.4))
+  Gini.Harms <- round(ineq(vecHarms, type='Gini'),2)
+  
+  totGramsYr <- sum(vecGramsYr)
+  
+  # Output --------------------
+  # (1) write to cellStats (broken down by User types and by cells of design):
+  User.type <- c(1,2,3,4)
+  cellStats <- cbind(User.type, mr, hd, sh, th, tol, pot, titr,
+                     mGrams, mDays, mRisks, mHarms, harmSums)
+  fn <- paste(ftag," cellStats ",rtag,".csv",sep="")
+  suppressWarnings(write.table(cellStats, append=TRUE,
+                               paste(subDir.cellStats,"/", fn, sep=""),
+                               sep=",", row.names=FALSE, col.names=FALSE))
+  
+  # (2) Write to mainStats (broken down by cells of design, 
+  #     collapsed across User types):
+  mainStats <- data.frame(mr, hd, sh, th, tol, pot, titr, totHarms, totGramsYr,
+                          Gini.Grams, Gini.Days, Gini.GramsYr, Gini.Risks, Gini.Harms)
+  fn <- paste(ftag," mainStats ",rtag,".csv",sep="")
+  suppressWarnings(write.table(mainStats, append=TRUE,
+                               paste(subDir.mainStats,"/", fn, sep=""),
+                               sep=",", row.names=FALSE, col.names=FALSE))
+  return(mainStats)
+  }
+
+Plotto <- function(ftag,ptag,DV,IV2,IV1,DV.tag,IV2tag,IV1tag){
+  print(paste("min DV = ",min(DV)))
+  print(paste("max DV = ",max(DV)))
+  pdf(paste(subDir.plots,"/", ftag, "_", ptag, "_", rtag,".pdf",sep=""))
+  print(levelplot(DV~IV2*IV1,xlab=IV2tag, ylab=IV1tag, zlab=DV.tag,
+        main=ptag, cex=2, contour=TRUE, at=seq(0,harm.ceiling,by=25),
+        panel=panel.2dsmoother, args=list(span=0.1),
+        col.regions = rev(heat.colors(100))))
+  dev.off()
+  }
+
+# = = = = = = = = = = = = = = = = = = = = = = = = = = = = = =
+
+# Function to interpret results:
+Interpret.it <- function(){
+  # bring back up from per-1000 to full population
+  totUsers <- sum(9967, 6133, 3230, 7894, 5729)*1000
+  totGramsYr <- out$totGrams*1000
+  totHarms <- out$totHarms*1000
+  
+  # Consumption
+  print(paste("Total Grams/Year =",
+              prettyNum(totGramsYr, digits=0, big.mark=",",
+                        big.interval=3)))
+  metricTons <- 0.000001*totGramsYr
+  metricTons.print <- prettyNum(metricTons, big.mark = ",", format="f", 
+                                digits=2)
+  print(paste("Total Metric Tons Consumed Per Year:", metricTons.print))
+  ondcp <- round((metricTons/5734)*100)
+  print(paste(ondcp,
+              "% of ONCDP's estimated 5,734 metric tons consumed in 2010."))
+  
+  # Harms
+  peruser <- round(totHarms/totUsers,5)
+  totHarmsYr <- prettyNum(totHarms, big.mark=",", format="f", digits=2)
+  teds <- round(305560/totUsers,5)
+  dawn <- round(455668/totUsers,5)
+  print(paste("Total Harm Incidents per Year:",totHarmsYr))
+  # Criterion is the average of the 2013 TEDS and 2011 DAWN marij counts
+  criterion <- (305560+455668)/2
+  print(paste("Target harms/year figure:",
+              prettyNum(criterion, big.mark=",", format="f", digits=2)))
+  print(paste(round((totHarms/criterion)*100),"% of target level of harms"))
+  print(paste("Annual rate per user:",peruser))
+  print(paste(
+    "Compare 305,560 mj TEDS admissions, with annual per-user rate:",teds))
+  print(paste(
+    "Compare 455,668 DAWN mentions, with annual per-user rate:",dawn))
+  }
+
+
+# = = = = = = = = = = = = = = = = = = = = = = = = = = = = = =
+# SHAPE x THRESHOLD (tol = 0, titr = 0.0)
+# reset default parameter settings
+mr <- maxRisk
+hd <- heavyDose
+sh <- shape
+th <- threshold
+tol <- 0
+pot <- 1
+titr <- 0
+for(i in 1:21){  #  sh
+  for(j in 1:21){ # th
+        ptag <- "Shape effect"
+        th <- vThreshold[j]
+        sh <- vShape[i]
+        ftag <- paste("Shape effect",hdlab,shlab,tollab,titrlab,sep="_")
+        Simulate.it(ftag, mr, hd, sh, th, tol, pot, titr)
+  }
+}
+fn <- paste(subDir.mainStats,"/", ftag," mainStats ", rtag, ".csv", sep="")
+dat <- data.frame(read.table(fn,sep=","))
+names(dat) <- c("mr","hd","sh","th","tol","pot","titr","totHarms")
+DV <- dat$totHarms
+DV.tag <- "Harms (000s)"
+IV2 <- dat$th
+IV2tag <- "Threshold (g)"
+names(IV2) <- dose.axis
+IV1 <- dat$sh
+IV1tag <-"Shape"
+names(IV1) <- vShape
+Plotto(ftag,ptag,DV,IV2,IV1,DV.tag,IV2tag,IV1tag)
+
+# = = = = = = = = = = = = = = = = = = = = = = = = = = = = = =
+# TITRATION  x THRESHOLD  (sh = 3, tol = 0.0)
+# reset default parameter settings
+mr <- maxRisk
+hd <- heavyDose
+sh <- shape
+th <- threshold
+tol <- 0
+pot <- 1
+titr <- 0
+for(i in 1:21){  #  titr
+  for(j in 1:21){ # th
+        ptag <- "Titration effect"
+        th <- vThreshold[j]
+        titr <- vTitrate[i]
+        ftag <- paste("Titr effect 1",hdlab,shlab,tollab,titrlab,sep="_")
+        Simulate.it(ftag, mr, hd, sh, th, tol, pot, titr)
+  }
+}
+fn <- paste(subDir.mainStats,"/", ftag," mainStats ", rtag, ".csv", sep="")
+dat <- data.frame(read.table(fn,sep=","))
+names(dat) <- c("mr","hd","sh","th","tol","pot","titr","totHarms")
+DV <- dat$totHarms
+DV.tag <- "Harms (000s)"
+IV2 <- dat$th
+IV2tag <- "Threshold (g)"
+names(IV2) <- dose.axis
+IV1 <- dat$titr
+IV1tag <-"Titration"
+names(IV1) <- vTitrate
+Plotto(ftag,ptag,DV,IV2,IV1,DV.tag,IV2tag,IV1tag)
+
+# = = = = = = = = = = = = = = = = = = = = = = = = = = = = = =
+# POTENCY RATIO x TITRATION (th = 1, sh = 3, tol = 1.0)
+# reset default parameter settings
+mr <- maxRisk
+hd <- heavyDose
+sh <- shape
+th <- 1
+tol <- 1
+pot <- potencyRatio
+titr <- 0
+for(i in 1:21){  #  tol
+  for(j in 1:21){ # titr
+        ptag <- "Titr effect 2"
+        titr <- vTitrate[j]
+        pot <- vPotencyRatio[i]
+        ftag <- paste(hdlab,shlab,tollab,titrlab,sep="_")
+        Simulate.it(ftag, mr, hd, sh, th, tol, pot, titr)
+  }
+}
+fn <- paste(subDir.mainStats,"/", ftag," mainStats ", rtag, ".csv", sep="")
+dat <- data.frame(read.table(fn,sep=","))
+names(dat) <- c("mr","hd","sh","th","tol","pot","titr","totHarms")
+DV <- dat$totHarms
+DV.tag <- "Harms (000s)"
+IV2 <- dat$titr
+IV2tag <- "Titration"
+names(IV2) <- dose.axis
+IV1 <- dat$pot
+IV1tag <-"Potency Ratio (New/Old)"
+names(IV1) <- vPotencyRatio
+Plotto(ftag,ptag,DV,IV2,IV1,DV.tag,IV2tag,IV1tag)
+
+
+# = = = = = = = = = = = = = = = = = = = = = = = = = = = = = =
+# TOLERANCE x THRESHOLD  (sh = 3, titr = 0.0)
+# reset default parameter settings
+mr <- maxRisk
+hd <- heavyDose
+sh <- shape
+th <- threshold
+tol <- 0
+pot <- 1
+titr <- 0
+for(i in 1:21){  #  tol
+  for(j in 1:21){ # th
+        ptag <- "Tolerance effect"
+        th <- vThreshold[j]
+        tol <- vTolerance[i]
+        ftag <- paste("Tol effect",hdlab,shlab,tollab,titrlab,sep="_")
+        Simulate.it(ftag, mr, hd, sh, th, tol, pot, titr)
+  }
+}
+fn <- paste(subDir.mainStats,"/", ftag," mainStats ", rtag, ".csv", sep="")
+dat <- data.frame(read.table(fn,sep=","))
+names(dat) <- c("mr","hd","sh","th","tol","pot","titr","totHarms")
+DV <- dat$totHarms
+DV.tag <- "Harms (000s)"
+IV2 <- dat$th
+IV2tag <- "Threshold (g)"
+names(IV2) <- dose.axis
+IV1 <- dat$tol
+IV1tag <-"Tolerance"
+names(IV1) <- vTolerance
+Plotto(ftag,ptag,DV,IV2,IV1,DV.tag,IV2tag,IV1tag)
+
+# = = = = = = = = = = = = = = = = = = = = = = = = = = = = = =
+# POTENCY RATIO x THRESHOLD (sh = 3, tol = 0.0, titr = 0.0)
+# reset default parameter settings
+mr <- maxRisk
+hd <- heavyDose
+sh <- shape
+th <- threshold
+tol <- 0
+titr <- 0
+for(i in 1:21){  #  pot
+  for(j in 1:21){ # th
+        ptag <- paste("titr ", titr, " tol ",tol, sep="")
+        th <- vThreshold[j]
+        pot <- vPotencyRatio[i]
+        ftag <- paste(hdlab,shlab,tollab,titrlab,sep="_")
+        Simulate.it(ftag, mr, hd, sh, th, tol, pot, titr)
+  }
+}
+fn <- paste(subDir.mainStats,"/", ftag," mainStats ", rtag, ".csv", sep="")
+dat <- data.frame(read.table(fn,sep=","))
+names(dat) <- c("mr","hd","sh","th","tol","pot","titr","totHarms")
+DV <- dat$totHarms
+DV.tag <- "Harms (000s)"
+IV2 <- dat$th
+IV2tag <- "Threshold (g)"
+names(IV2) <- dose.axis
+IV1 <- dat$pot
+IV1tag <-"Potency Ratio (New/Old)"
+names(IV1) <- vPotencyRatio
+hist(dat$totHarms)
+hist(DV)
+summary(DV)
+Plotto(ftag,ptag,DV,IV2,IV1,DV.tag,IV2tag,IV1tag)
+
+# = = = = = = = = = = = = = = = = = = = = = = = = = = = = = =
+# EFFECT OF THRESHOLD x POTENCY RAIO (sh = 3, tol = 0.0, titr = 0.5)
+# reset default parameter settings
+mr <- maxRisk
+hd <- heavyDose
+sh <- shape
+th <- threshold
+tol <- 0
+titr <- .5
+for(i in 1:21){  #  pot
+  for(j in 1:21){ # th
+        ptag <- paste("titr ", titr, " tol ",tol, sep="")
+        th <- vThreshold[j]
+        pot <- vPotencyRatio[i]
+        ftag <- paste(hdlab,shlab,tollab,titrlab,sep="_")
+        Simulate.it(ftag, mr, hd, sh, th, tol, pot, titr)
+  }
+}
+fn <- paste(subDir.mainStats,"/", ftag," mainStats ", rtag, ".csv", sep="")
+dat <- data.frame(read.table(fn,sep=","))
+names(dat) <- c("mr","hd","sh","th","tol","pot","titr","totHarms")
+DV <- dat$totHarms
+DV.tag <- "Harms (000s)"
+IV2 <- dat$th
+IV2tag <- "Threshold (g)"
+names(IV2) <- dose.axis
+IV1 <- dat$pot
+IV1tag <-"Potency Ratio (New/Old)"
+names(IV1) <- vPotencyRatio
+hist(dat$totHarms)
+hist(DV)
+summary(DV)
+Plotto(ftag,ptag,DV,IV2,IV1,DV.tag,IV2tag,IV1tag)
+
+
+# = = = = = = = = = = = = = = = = = = = = = = = = = = = = = =
+# POTENCY RATIO x THRESHOLD (sh = 3, tol = 0.0, titr = 1.0)
+
+# reset default parameter settings
+mr <- maxRisk
+hd <- heavyDose
+sh <- shape
+th <- threshold
+tol <- 0
+pot <- potencyRatio
+titr <- 1
+for(i in 1:21){  #  tol
+  for(j in 1:21){ # th
+        ptag <- paste("titr ", titr, " tol ",tol, sep="")
+        th <- vThreshold[j]
+        pot <- vPotencyRatio[i]
+        ftag <- paste(hdlab,shlab,tollab,titrlab,sep="_")
+        Simulate.it(ftag, mr, hd, sh, th, tol, pot, titr)
+  }
+}
+fn <- paste(subDir.mainStats,"/", ftag," mainStats ", rtag, ".csv", sep="")
+dat <- data.frame(read.table(fn,sep=","))
+names(dat) <- c("mr","hd","sh","th","tol","pot","titr","totHarms")
+DV <- dat$totHarms
+DV.tag <- "Harms (000s)"
+IV2 <- dat$th
+IV2tag <- "Threshold (g)"
+names(IV2) <- dose.axis
+IV1 <- dat$pot
+IV1tag <-" Potency Ratio (New/Old)"
+names(IV1) <- vPotencyRatio
+Plotto(ftag,ptag,DV,IV2,IV1,DV.tag,IV2tag,IV1tag)
+
+
+# = = = = = = = = = = = = = = = = = = = = = = = = = = = = = =
+# POTENCY RATIO x THRESHOLD (sh = 3, tol = 0.5, titr = 0.0)
+# reset default parameter settings
+mr <- maxRisk
+hd <- heavyDose
+sh <- shape
+th <- threshold
+tol <- .5
+pot <- potencyRatio
+titr <- 0
+for(i in 1:21){  #  tol
+  for(j in 1:21){ # th
+        ptag <- paste("titr ", titr, " tol ",tol, sep="")
+        th <- vThreshold[j]
+        pot <- vPotencyRatio[i]
+        ftag <- paste(hdlab,shlab,tollab,titrlab,sep="_")
+        Simulate.it(ptag, mr, hd, sh, th, tol, pot, titr)
+  }
+}
+fn <- paste(subDir.mainStats,"/", ftag," mainStats ", rtag, ".csv", sep="")
+dat <- data.frame(read.table(fn,sep=","))
+names(dat) <- c("mr","hd","sh","th","tol","pot","titr","totHarms")
+DV <- dat$totHarms
+DV.tag <- "Harms (000s)"
+IV2 <- dat$th
+IV2tag <- "Threshold (g)"
+names(IV2) <- dose.axis
+IV1 <- dat$pot
+IV1tag <-"Potency Ratio (New/Old)"
+names(IV1) <- vPotencyRatio
+Plotto(ftag,ptag,DV,IV2,IV1,DV.tag,IV2tag,IV1tag)
+
+# = = = = = = = = = = = = = = = = = = = = = = = = = = = = = =
+# POTENCY RATIO x THRESHOLD (sh = 3, tol = 0.5, titr = 0.5)
+# reset default parameter settings
+mr <- maxRisk
+hd <- heavyDose
+sh <- shape
+th <- threshold
+tol <- .5
+pot <- potencyRatio
+titr <- .5
+for(i in 1:21){  #  tol
+  for(j in 1:21){ # th
+        ptag <- paste("titr ", titr, " tol ",tol, sep="")
+        th <- vThreshold[j]
+        pot <- vPotencyRatio[i]
+        ftag <- paste(hdlab,shlab,tollab,titrlab,sep="_")
+        Simulate.it(ftag, mr, hd, sh, th, tol, pot, titr)
+  }
+}
+fn <- paste(subDir.mainStats,"/", ftag," mainStats ", rtag, ".csv", sep="")
+dat <- data.frame(read.table(fn,sep=","))
+names(dat) <- c("mr","hd","sh","th","tol","pot","titr","totHarms")
+DV <- dat$totHarms
+DV.tag <- "Harms (000s)"
+IV2 <- dat$th
+IV2tag <- "Threshold (g)"
+names(IV2) <- dose.axis
+IV1 <- dat$pot
+IV1tag <-"Potency Ratio (New/Old)"
+names(IV1) <- vPotencyRatio
+Plotto(ftag,ptag,DV,IV2,IV1,DV.tag,IV2tag,IV1tag)
+
+# = = = = = = = = = = = = = = = = = = = = = = = = = = = = = =
+# POTENCY RATIO x THRESHOLD (sh = 3, tol = 0.5, titr = 1.0)
+# reset default parameter settings
+mr <- maxRisk
+hd <- heavyDose
+sh <- shape
+th <- threshold
+tol <- .5
+pot <- potencyRatio
+titr <- 1
+for(i in 1:21){  #  tol
+  for(j in 1:21){ # th
+        ptag <- paste("titr ", titr, " tol ",tol, sep="")
+        th <- vThreshold[j]
+        pot <- vPotencyRatio[i]
+        ftag <- paste(hdlab,shlab,tollab,titrlab,sep="_")
+        Simulate.it(ftag, mr, hd, sh, th, tol, pot, titr)
+  }
+}
+fn <- paste(subDir.mainStats,"/", ftag," mainStats ", rtag, ".csv", sep="")
+dat <- data.frame(read.table(fn,sep=","))
+names(dat) <- c("mr","hd","sh","th","tol","pot","titr","totHarms")
+DV <- dat$totHarms
+DV.tag <- "Harms (000s)"
+IV2 <- dat$th
+IV2tag <- "Threshold (g)"
+names(IV2) <- dose.axis
+IV1 <- dat$pot
+IV1tag <-"Potency Ratio (New/Old)"
+names(IV1) <- vPotencyRatio
+Plotto(ftag,ptag,DV,IV2,IV1,DV.tag,IV2tag,IV1tag)
+
+# = = = = = = = = = = = = = = = = = = = = = = = = = = = = = =
+# POTENCY RATIO x THRESHOLD (sh = 3, tol = 1.0, titr = 0.0)
+# reset default parameter settings
+mr <- maxRisk
+hd <- heavyDose
+sh <- shape
+th <- threshold
+tol <- 1
+pot <- potencyRatio
+titr <- 0
+for(i in 1:21){  #  tol
+  for(j in 1:21){ # th
+        ptag <- paste("titr ", titr, " tol ",tol, sep="")
+        th <- vThreshold[j]
+        pot <- vPotencyRatio[i]
+        ftag <- paste(hdlab,shlab,tollab,titrlab,sep="_")
+        Simulate.it(ftag, mr, hd, sh, th, tol, pot, titr)
+  }
+}
+fn <- paste(subDir.mainStats,"/", ftag," mainStats ", rtag, ".csv", sep="")
+dat <- data.frame(read.table(fn,sep=","))
+names(dat) <- c("mr","hd","sh","th","tol","pot","titr","totHarms")
+DV <- dat$totHarms
+DV.tag <- "Harms (000s)"
+IV2 <- dat$th
+IV2tag <- "Threshold (g)"
+names(IV2) <- dose.axis
+IV1 <- dat$pot
+IV1tag <-"Potency Ratio (New/Old)"
+names(IV1) <- vPotencyRatio
+Plotto(ftag,ptag,DV,IV2,IV1,DV.tag,IV2tag,IV1tag)
+
+# = = = = = = = = = = = = = = = = = = = = = = = = = = = = = =
+# POTENCY RATIO x THRESHOLD (sh = 3, tol = 1.0, titr = 0.5)
+# reset default parameter settings
+mr <- maxRisk
+hd <- heavyDose
+sh <- shape
+th <- threshold
+tol <- 1
+pot <- potencyRatio
+titr <- .5
+for(i in 1:21){  #  tol
+  for(j in 1:21){ # th
+        ptag <- paste("titr ", titr, " tol ",tol, sep="")
+        th <- vThreshold[j]
+        pot <- vPotencyRatio[i]
+        ftag <- paste(hdlab,shlab,tollab,titrlab,sep="_")
+        Simulate.it(ftag, mr, hd, sh, th, tol, pot, titr)
+  }
+}
+fn <- paste(subDir.mainStats,"/", ftag," mainStats ", rtag, ".csv", sep="")
+dat <- data.frame(read.table(fn,sep=","))
+names(dat) <- c("mr","hd","sh","th","tol","pot","titr","totHarms")
+DV <- dat$totHarms
+DV.tag <- "Harms (000s)"
+IV2 <- dat$th
+IV2tag <- "Threshold (g)"
+names(IV2) <- dose.axis
+IV1 <- dat$pot
+IV1tag <-"Potency Ratio (New/Old)"
+names(IV1) <- vPotencyRatio
+Plotto(ftag,ptag,DV,IV2,IV1,DV.tag,IV2tag,IV1tag)
+
+# = = = = = = = = = = = = = = = = = = = = = = = = = = = = = =
+# POTENCY RATIO x THRESHOLD (sh = 3, tol = 1.0, titr = 1.0)
+# reset default parameter settings
+mr <- maxRisk
+hd <- heavyDose
+sh <- shape
+th <- threshold
+tol <- 1
+pot <- potencyRatio
+titr <- 1
+for(i in 1:21){  #  tol
+  for(j in 1:21){ # th
+        ptag <- paste("titr ", titr, " tol ",tol, sep="")
+        th <- vThreshold[j]
+        pot <- vPotencyRatio[i]
+        ftag <- paste(hdlab,shlab,tollab,titrlab,sep="_")
+        Simulate.it(ftag, mr, hd, sh, th, tol, pot, titr)
+  }
+}
+fn <- paste(subDir.mainStats,"/", ftag," mainStats ", rtag, ".csv", sep="")
+dat <- data.frame(read.table(fn,sep=","))
+names(dat) <- c("mr","hd","sh","th","tol","pot","titr","totHarms")
+DV <- dat$totHarms
+DV.tag <- "Harms (000s)"
+IV2 <- dat$th
+IV2tag <- "Threshold (g)"
+names(IV2) <- dose.axis
+IV1 <- dat$pot
+IV1tag <-"Potency Ratio (New/Old)"
+names(IV1) <- vPotencyRatio
+Plotto(ftag,ptag,DV,IV2,IV1,DV.tag,IV2tag,IV1tag)
+
+print(ptm0 <- proc.time())
+
+```
+
+

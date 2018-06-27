@@ -1,17 +1,19 @@
 ---
-title: "SimSemilla: Simulating the effects of cannabis consumption and potency on harms"
+title: 'SimSemilla: Simulating the effects of cannabis consumption and potency on
+  harms'
 author: |
   | Robert J. MacCoun
   | Stanford University
 date: "`r format(Sys.time(), '%d %B, %Y')`"
-fontsize: 12pt
-geometry: margin=3cm
 output:
+  html_document:
+    df_print: paged
   pdf_document:
-    fig_width: 6
+    fig_caption: yes
     fig_height: 5
-    fig_caption: true
-  
+    fig_width: 6
+geometry: margin=3cm
+fontsize: 12pt
 ---
 
 *DRAFT: PLEASE DO NOT CIRCULATE OR QUOTE WITHOUT PERMISSION*
